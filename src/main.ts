@@ -1,5 +1,6 @@
 import './style.css';
 import { HandTracker, Point2D, HAND_LANDMARKS } from './hand-tracker';
+import { DomainExpansionEffect } from './domain-expansion-effect';
 
 // Configuration
 const CONFIG = {
@@ -19,6 +20,12 @@ let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
 let debugCanvas: HTMLCanvasElement;
 let debugCtx: CanvasRenderingContext2D;
+let effectCanvas: HTMLCanvasElement;
+let effectCtx: CanvasRenderingContext2D;
+let domainEffect: DomainExpansionEffect;
+
+// Pose detection state (to prevent repeated triggers)
+let muryoKushoWasDetected = false;
 
 // Smoothed finger position (normalized 0-1)
 let smoothedFingerPos: Point2D | null = null;
@@ -40,6 +47,7 @@ function setupDOM(): void {
       <div class="canvas-container">
         <canvas id="output-canvas"></canvas>
         <canvas id="debug-canvas"></canvas>
+        <canvas id="effect-canvas"></canvas>
       </div>
       <div class="controls">
         <label>
@@ -65,6 +73,14 @@ function setupDOM(): void {
   debugCtx = debugCanvas.getContext('2d')!;
   debugCanvas.width = CONFIG.canvasWidth;
   debugCanvas.height = CONFIG.canvasHeight;
+
+  effectCanvas = document.getElementById('effect-canvas') as HTMLCanvasElement;
+  effectCtx = effectCanvas.getContext('2d')!;
+  effectCanvas.width = CONFIG.canvasWidth;
+  effectCanvas.height = CONFIG.canvasHeight;
+
+  // Initialize domain expansion effect
+  domainEffect = new DomainExpansionEffect(effectCanvas);
 
   video = document.getElementById('video') as HTMLVideoElement;
 
@@ -148,17 +164,40 @@ function startRenderLoop(): void {
       }
     }
 
-    // Render main canvas
+    // Check for 無量空処 pose and trigger effect
+    if (result.isNewFrame) {
+      // Can trigger if effect is not currently active
+      const canTrigger = domainEffect.canTrigger();
+
+      if (result.muryoKusho.detected && !muryoKushoWasDetected && canTrigger && result.muryoKusho.centerPoint) {
+        // Pose just detected - trigger effect!
+        console.log('[Main] 無量空処 detected! Triggering effect...');
+        domainEffect.trigger(result.muryoKusho.centerPoint);
+      }
+
+      muryoKushoWasDetected = result.muryoKusho.detected;
+    }
+
+    // Update effect
+    domainEffect.update();
+
+    // Render main canvas (apply shake from effect if active)
     renderMainCanvas();
+
+    // Render effect canvas
+    effectCtx.clearRect(0, 0, effectCanvas.width, effectCanvas.height);
+    domainEffect.render();
 
     // Render debug canvas (only on new frames to prevent flickering)
     if (CONFIG.showDebug && result.isNewFrame) {
-      renderDebugCanvas(result.allHands, result.rightIndexFingerTip);
+      renderDebugCanvas(result.allHands, result.rightIndexFingerTip, result.muryoKusho.detected);
     }
 
     // Update status (only on new frames)
     if (result.isNewFrame) {
-      if (result.rightIndexFingerTip) {
+      if (result.muryoKusho.detected) {
+        updateStatus(`🔮 無量空処 検出！ (confidence: ${(result.muryoKusho.confidence * 100).toFixed(0)}%)`);
+      } else if (result.rightIndexFingerTip) {
         updateStatus(`追跡中 - 指位置: (${(result.rightIndexFingerTip.x * 100).toFixed(1)}%, ${(result.rightIndexFingerTip.y * 100).toFixed(1)}%)`);
       } else if (result.leftIndexFingerTip) {
         updateStatus(`左手検出中 - 右手を使ってください`);
@@ -229,7 +268,8 @@ function renderMainCanvas(): void {
 
 function renderDebugCanvas(
   allHands: ReturnType<typeof handTracker.detect>['allHands'],
-  rightIndexFinger: Point2D | null
+  rightIndexFinger: Point2D | null,
+  muryoKushoDetected: boolean = false
 ): void {
   debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
 
@@ -307,6 +347,24 @@ function renderDebugCanvas(
     debugCtx.font = '12px sans-serif';
     debugCtx.fillStyle = '#00ffff';
     debugCtx.fillText('追跡中', x - 20, y - 20);
+  }
+
+  // Draw 無量空処 detection indicator
+  if (muryoKushoDetected) {
+    // Draw glowing border around the canvas
+    debugCtx.strokeStyle = '#ff00ff';
+    debugCtx.lineWidth = 4;
+    debugCtx.shadowColor = '#ff00ff';
+    debugCtx.shadowBlur = 20;
+    debugCtx.strokeRect(10, 10, debugCanvas.width - 20, debugCanvas.height - 20);
+    debugCtx.shadowBlur = 0;
+
+    // Draw indicator text
+    debugCtx.font = 'bold 24px sans-serif';
+    debugCtx.fillStyle = '#ff00ff';
+    debugCtx.textAlign = 'center';
+    debugCtx.fillText('🔮 無量空処 検出', debugCanvas.width / 2, 40);
+    debugCtx.textAlign = 'start';
   }
 }
 

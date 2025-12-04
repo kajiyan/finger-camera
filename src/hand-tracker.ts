@@ -34,11 +34,27 @@ export interface Point2D {
   y: number;
 }
 
+export interface Point3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface MuryoKushoDetection {
+  detected: boolean;
+  // Center point between index and middle finger tips
+  centerPoint: Point2D | null;
+  // Confidence score (0-1) based on finger proximity
+  confidence: number;
+}
+
 export interface HandTrackingResult {
   rightIndexFingerTip: Point2D | null;
   leftIndexFingerTip: Point2D | null;
   allHands: HandLandmarkerResult | null;
   isNewFrame: boolean;
+  // 無量空処 pose detection
+  muryoKusho: MuryoKushoDetection;
 }
 
 export class HandTracker {
@@ -49,6 +65,7 @@ export class HandTracker {
     leftIndexFingerTip: null,
     allHands: null,
     isNewFrame: false,
+    muryoKusho: { detected: false, centerPoint: null, confidence: 0 },
   };
 
   async initialize(): Promise<void> {
@@ -83,6 +100,7 @@ export class HandTracker {
       leftIndexFingerTip: null,
       allHands: null,
       isNewFrame: true,
+      muryoKusho: { detected: false, centerPoint: null, confidence: 0 },
     };
 
     const detectionResult = this.handLandmarker.detectForVideo(video, timestamp);
@@ -124,8 +142,89 @@ export class HandTracker {
       }
     }
 
+    // Detect 無量空処 pose (index and middle finger tips touching)
+    result.muryoKusho = this.detectMuryoKusho(detectionResult);
+
     this.lastResult = result;
     return result;
+  }
+
+  /**
+   * Detect the 無量空処 (Muryō Kūsho / Unlimited Void) pose
+   * This is the 帝釈天印 (Taishakuten-in) mudra where index and middle finger tips touch
+   */
+  private detectMuryoKusho(detectionResult: HandLandmarkerResult): MuryoKushoDetection {
+    const noDetection: MuryoKushoDetection = {
+      detected: false,
+      centerPoint: null,
+      confidence: 0,
+    };
+
+    if (!detectionResult.landmarks || detectionResult.landmarks.length === 0) {
+      return noDetection;
+    }
+
+    // Check each detected hand for the pose
+    for (let i = 0; i < detectionResult.landmarks.length; i++) {
+      const landmarks = detectionResult.landmarks[i];
+      if (!landmarks || landmarks.length < 21) continue;
+
+      const indexTip = landmarks[HAND_LANDMARKS.INDEX_FINGER_TIP];
+      const middleTip = landmarks[HAND_LANDMARKS.MIDDLE_FINGER_TIP];
+      const indexPip = landmarks[HAND_LANDMARKS.INDEX_FINGER_PIP];
+      const middlePip = landmarks[HAND_LANDMARKS.MIDDLE_FINGER_PIP];
+      const wrist = landmarks[HAND_LANDMARKS.WRIST];
+
+      // Calculate distance between index and middle finger tips (normalized)
+      const tipDistance = Math.sqrt(
+        Math.pow(indexTip.x - middleTip.x, 2) +
+        Math.pow(indexTip.y - middleTip.y, 2) +
+        Math.pow(indexTip.z - middleTip.z, 2)
+      );
+
+      // Calculate hand size reference (wrist to middle finger tip distance)
+      const handSize = Math.sqrt(
+        Math.pow(wrist.x - middleTip.x, 2) +
+        Math.pow(wrist.y - middleTip.y, 2)
+      );
+
+      // Normalize tip distance by hand size
+      const normalizedTipDistance = tipDistance / handSize;
+
+      // Check if fingers are extended (tips should be above PIPs in screen space, i.e., lower y value)
+      // For this pose, we want fingers pointing up, so tip.y < pip.y in normalized coords
+      const indexExtended = indexTip.y < indexPip.y;
+      const middleExtended = middleTip.y < middlePip.y;
+
+      // Threshold for detection (tips should be very close - within ~15% of hand size)
+      const TOUCH_THRESHOLD = 0.15;
+      const tipsClose = normalizedTipDistance < TOUCH_THRESHOLD;
+
+      // Calculate confidence based on how close the tips are
+      const confidence = Math.max(0, 1 - (normalizedTipDistance / TOUCH_THRESHOLD));
+
+      // Debug logging
+      if (normalizedTipDistance < 0.3) {
+        console.log(`[MuryoKusho] tipDist=${normalizedTipDistance.toFixed(3)}, ` +
+          `indexExt=${indexExtended}, middleExt=${middleExtended}, conf=${confidence.toFixed(2)}`);
+      }
+
+      // Pose detected if tips are close and both fingers are extended
+      if (tipsClose && indexExtended && middleExtended) {
+        const centerPoint: Point2D = {
+          x: (indexTip.x + middleTip.x) / 2,
+          y: (indexTip.y + middleTip.y) / 2,
+        };
+
+        return {
+          detected: true,
+          centerPoint,
+          confidence,
+        };
+      }
+    }
+
+    return noDetection;
   }
 
   destroy(): void {

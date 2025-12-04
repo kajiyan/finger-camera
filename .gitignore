@@ -26,10 +26,5 @@ dist-ssr
 # MCP config (local)
 .mcp.json
 
-# Screenshots/debug images
-*.jpg
-*.png
-*.jpeg
-
 # Claude config (local)
 .claude/
