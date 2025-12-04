@@ -324,9 +324,6 @@ function renderMainCanvas(): void {
   }
 
   ctx.restore();
-
-  // Draw center crosshair (always at screen center)
-  drawCrosshair(ctx, canvas.width / 2, canvas.height / 2, '#00ff00', 30);
 }
 
 function renderDebugCanvas(
@@ -466,34 +463,6 @@ function renderDebugCanvas(
     debugCtx.fillText(statusText, debugCanvas.width / 2, 40);
     debugCtx.textAlign = 'start';
   }
-}
-
-function drawCrosshair(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  color: string,
-  size: number
-): void {
-  context.strokeStyle = color;
-  context.lineWidth = 2;
-
-  // Horizontal line
-  context.beginPath();
-  context.moveTo(x - size, y);
-  context.lineTo(x + size, y);
-  context.stroke();
-
-  // Vertical line
-  context.beginPath();
-  context.moveTo(x, y - size);
-  context.lineTo(x, y + size);
-  context.stroke();
-
-  // Center circle
-  context.beginPath();
-  context.arc(x, y, 5, 0, Math.PI * 2);
-  context.stroke();
 }
 
 function getHandConnections(): [number, number][] {
