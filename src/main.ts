@@ -4,7 +4,7 @@ import { HandTracker, Point2D, HAND_LANDMARKS } from './hand-tracker';
 // Configuration
 const CONFIG = {
   // Smoothing factor for finger position (0-1, higher = more smoothing)
-  smoothingFactor: 0.15,
+  smoothingFactor: 0.5,
   // Whether to show debug overlay
   showDebug: true,
   // Canvas size
@@ -47,8 +47,8 @@ function setupDOM(): void {
           デバッグ表示
         </label>
         <label>
-          スムージング: <span id="smoothing-value">0.15</span>
-          <input type="range" id="smoothing-slider" min="0.05" max="0.5" step="0.01" value="0.15">
+          スムージング: <span id="smoothing-value">0.50</span>
+          <input type="range" id="smoothing-slider" min="0.05" max="1.0" step="0.01" value="0.5">
         </label>
       </div>
       <div id="status">初期化中...</div>
