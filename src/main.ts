@@ -104,7 +104,7 @@ function setupDOM(): void {
   domainEffect = new DomainExpansionEffect(effectCanvas);
 
   // Initialize sound effect
-  domainExpansionSound = new Audio('/sound.mp3');
+  domainExpansionSound = new Audio(`${import.meta.env.BASE_URL}sound.mp3`);
   domainExpansionSound.preload = 'auto';
 
   // Handle window resize
