@@ -29,23 +29,32 @@ interface BurstLine {
   width: number;
   opacity: number;
   speed: number;
+  delay: number;
+  startTime: number;
+  layer: number; // 0 = back, 1 = front
 }
 
-// Floating text element
-interface FloatingText {
-  text: string;
+// Floating character element (for per-character animation)
+interface FloatingCharacter {
+  char: string;
   x: number;
   y: number;
+  targetX: number;
   targetY: number;
   opacity: number;
   scale: number;
   targetScale: number;
+  rotation: number;
+  targetRotation: number;
+  delay: number;
+  startTime: number;
+  groupIndex: number; // 0 = 領域展開, 1 = 無量空処
 }
 
 export class DomainExpansionEffect {
   private particles: InkParticle[] = [];
   private burstLines: BurstLine[] = [];
-  private floatingTexts: FloatingText[] = [];
+  private floatingChars: FloatingCharacter[] = [];
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
 
@@ -101,27 +110,62 @@ export class DomainExpansionEffect {
     setTimeout(() => this.createInkWave(centerX, centerY, 2), 200);
     setTimeout(() => this.createInkWave(centerX, centerY, 3), 350);
 
-    // Create floating text
-    setTimeout(() => {
-      this.createFloatingText('領域展開', this.canvas.width / 2, this.canvas.height / 2 - 100);
-    }, 300);
-
-    setTimeout(() => {
-      this.createFloatingText('無量空処', this.canvas.width / 2, this.canvas.height / 2 + 50);
-    }, 600);
+    // Create floating text with per-character animation (appear early, before effect peaks)
+    this.createFloatingChars('領域展開', this.canvas.width / 2, this.canvas.height / 2 - 80, 0, 50);
+    this.createFloatingChars('無量空処', this.canvas.width / 2, this.canvas.height / 2 + 80, 1, 250);
   }
 
   private createBurstLines(_centerX: number, _centerY: number): void {
-    const numLines = 24;
-    for (let i = 0; i < numLines; i++) {
-      const angle = (i / numLines) * Math.PI * 2;
+    const now = performance.now();
+
+    // Layer 0: Background burst lines (thick, slow)
+    const numBackLines = 36;
+    for (let i = 0; i < numBackLines; i++) {
+      const angle = (i / numBackLines) * Math.PI * 2 + Math.random() * 0.1;
       this.burstLines.push({
         angle,
         length: 0,
-        targetLength: 300 + Math.random() * 400,
+        targetLength: 500 + Math.random() * 400,
+        width: 8 + Math.random() * 12,
+        opacity: 0.6,
+        speed: 20 + Math.random() * 15,
+        delay: Math.random() * 100,
+        startTime: now,
+        layer: 0,
+      });
+    }
+
+    // Layer 1: Foreground burst lines (thin, fast, more numerous)
+    const numFrontLines = 72;
+    for (let i = 0; i < numFrontLines; i++) {
+      const angle = (i / numFrontLines) * Math.PI * 2 + Math.random() * 0.05;
+      this.burstLines.push({
+        angle,
+        length: 0,
+        targetLength: 600 + Math.random() * 500,
         width: 2 + Math.random() * 4,
         opacity: 1,
-        speed: 15 + Math.random() * 10,
+        speed: 30 + Math.random() * 20,
+        delay: 50 + Math.random() * 150,
+        startTime: now,
+        layer: 1,
+      });
+    }
+
+    // Add some extra dramatic thick lines
+    const numDramaticLines = 12;
+    for (let i = 0; i < numDramaticLines; i++) {
+      const angle = (i / numDramaticLines) * Math.PI * 2;
+      this.burstLines.push({
+        angle,
+        length: 0,
+        targetLength: 800 + Math.random() * 300,
+        width: 15 + Math.random() * 10,
+        opacity: 0.8,
+        speed: 40 + Math.random() * 20,
+        delay: 0,
+        startTime: now,
+        layer: 1,
       });
     }
   }
@@ -152,15 +196,38 @@ export class DomainExpansionEffect {
     }
   }
 
-  private createFloatingText(text: string, x: number, y: number): void {
-    this.floatingTexts.push({
-      text,
-      x,
-      y: y + 50,
-      targetY: y,
-      opacity: 0,
-      scale: 0.5,
-      targetScale: 1,
+  private createFloatingChars(text: string, centerX: number, centerY: number, groupIndex: number, baseDelay: number): void {
+    const now = performance.now();
+    const chars = text.split('');
+    const charWidth = 80; // Approximate width per character
+    const totalWidth = chars.length * charWidth;
+    const startX = centerX - totalWidth / 2 + charWidth / 2;
+
+    chars.forEach((char, i) => {
+      const targetX = startX + i * charWidth;
+      const targetY = centerY;
+
+      // Each character starts from a different dramatic position
+      const angle = (Math.random() - 0.5) * Math.PI * 0.5;
+      const distance = 200 + Math.random() * 150;
+      const startOffsetX = Math.cos(angle) * distance * (Math.random() > 0.5 ? 1 : -1);
+      const startOffsetY = Math.sin(angle) * distance + (Math.random() - 0.5) * 100;
+
+      this.floatingChars.push({
+        char,
+        x: targetX + startOffsetX,
+        y: targetY + startOffsetY + 100,
+        targetX,
+        targetY,
+        opacity: 0,
+        scale: 0.3 + Math.random() * 0.3,
+        targetScale: 1,
+        rotation: (Math.random() - 0.5) * 0.8,
+        targetRotation: 0,
+        delay: baseDelay + i * 80, // Staggered delay per character
+        startTime: now,
+        groupIndex,
+      });
     });
   }
 
@@ -168,9 +235,11 @@ export class DomainExpansionEffect {
    * Update effect state (call every frame)
    */
   update(): void {
-    if (!this.isActive && this.particles.length === 0 && this.burstLines.length === 0 && this.floatingTexts.length === 0) {
+    if (!this.isActive && this.particles.length === 0 && this.burstLines.length === 0 && this.floatingChars.length === 0) {
       return;
     }
+
+    const now = performance.now();
 
     // Update flash
     this.flashOpacity *= 0.9;
@@ -188,12 +257,17 @@ export class DomainExpansionEffect {
       this.shakeIntensity = 0;
     }
 
-    // Update burst lines
+    // Update burst lines with delay support
     for (let i = this.burstLines.length - 1; i >= 0; i--) {
       const line = this.burstLines[i];
+      const lineAge = now - line.startTime;
+
+      // Wait for delay
+      if (lineAge < line.delay) continue;
+
       line.length += line.speed;
       if (line.length >= line.targetLength) {
-        line.opacity -= 0.03;
+        line.opacity -= 0.025;
         if (line.opacity <= 0) {
           this.burstLines.splice(i, 1);
         }
@@ -224,31 +298,41 @@ export class DomainExpansionEffect {
       }
     }
 
-    // Update floating texts
+    // Update floating characters with per-character animation
     const age = performance.now() - this.effectStartTime;
-    const isFadingOut = age > 2000;
+    const isFadingOut = age > 2500;
 
-    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
-      const text = this.floatingTexts[i];
+    for (let i = this.floatingChars.length - 1; i >= 0; i--) {
+      const char = this.floatingChars[i];
+      const charAge = now - char.startTime;
 
-      // Animate position and scale
-      text.y += (text.targetY - text.y) * 0.1;
-      text.scale += (text.targetScale - text.scale) * 0.1;
+      // Wait for delay
+      if (charAge < char.delay) continue;
+
+      // Calculate easing progress (0 to 1)
+      const animProgress = Math.min(1, (charAge - char.delay) / 400);
+      const easeOut = 1 - Math.pow(1 - animProgress, 3); // Cubic ease-out
+
+      // Animate position with easing
+      char.x += (char.targetX - char.x) * 0.15 * easeOut;
+      char.y += (char.targetY - char.y) * 0.15 * easeOut;
+      char.scale += (char.targetScale - char.scale) * 0.12;
+      char.rotation += (char.targetRotation - char.rotation) * 0.15;
 
       if (isFadingOut) {
         // Fade out phase - only decrease opacity
-        text.opacity -= 0.03;
-        if (text.opacity <= 0) {
-          this.floatingTexts.splice(i, 1);
+        char.opacity -= 0.04;
+        if (char.opacity <= 0) {
+          this.floatingChars.splice(i, 1);
         }
       } else {
         // Fade in phase - increase opacity toward 1
-        text.opacity += (1 - text.opacity) * 0.08;
+        char.opacity += (1 - char.opacity) * 0.12;
       }
     }
 
     // Check if effect is complete
-    if (age > 3000 && this.particles.length === 0 && this.burstLines.length === 0 && this.floatingTexts.length === 0) {
+    if (age > 3500 && this.particles.length === 0 && this.burstLines.length === 0 && this.floatingChars.length === 0) {
       this.isActive = false;
     }
   }
@@ -268,28 +352,11 @@ export class DomainExpansionEffect {
       this.ctx.translate(this.shakeOffset.x, this.shakeOffset.y);
     }
 
-    // Draw burst lines (from center)
     const centerX = this.canvas.width / 2;
     const centerY = this.canvas.height / 2;
 
-    for (const line of this.burstLines) {
-      this.ctx.save();
-      this.ctx.strokeStyle = `rgba(255, 255, 255, ${line.opacity * 0.8})`;
-      this.ctx.lineWidth = line.width;
-      this.ctx.lineCap = 'round';
-
-      const startDist = Math.max(0, line.length - 100);
-      const startX = centerX + Math.cos(line.angle) * startDist;
-      const startY = centerY + Math.sin(line.angle) * startDist;
-      const endX = centerX + Math.cos(line.angle) * line.length;
-      const endY = centerY + Math.sin(line.angle) * line.length;
-
-      this.ctx.beginPath();
-      this.ctx.moveTo(startX, startY);
-      this.ctx.lineTo(endX, endY);
-      this.ctx.stroke();
-      this.ctx.restore();
-    }
+    // Draw background burst lines (layer 0)
+    this.renderBurstLines(centerX, centerY, 0);
 
     // Draw ink particles
     for (const p of this.particles) {
@@ -309,16 +376,22 @@ export class DomainExpansionEffect {
       this.ctx.restore();
     }
 
-    // Draw floating text
-    for (const text of this.floatingTexts) {
-      this.ctx.save();
-      this.ctx.translate(text.x, text.y);
-      this.ctx.scale(text.scale, text.scale);
-      this.ctx.globalAlpha = text.opacity;
+    // Draw foreground burst lines (layer 1)
+    this.renderBurstLines(centerX, centerY, 1);
 
-      // Text shadow/glow
-      this.ctx.shadowColor = '#4a1a6b';
-      this.ctx.shadowBlur = 30;
+    // Draw floating characters with per-character animation
+    for (const char of this.floatingChars) {
+      if (char.opacity <= 0) continue;
+
+      this.ctx.save();
+      this.ctx.translate(char.x, char.y);
+      this.ctx.rotate(char.rotation);
+      this.ctx.scale(char.scale, char.scale);
+      this.ctx.globalAlpha = char.opacity;
+
+      // Text shadow/glow - more intense
+      this.ctx.shadowColor = '#6b2a9b';
+      this.ctx.shadowBlur = 40;
       this.ctx.shadowOffsetX = 0;
       this.ctx.shadowOffsetY = 0;
 
@@ -326,12 +399,13 @@ export class DomainExpansionEffect {
       this.ctx.fillStyle = '#ffffff';
       this.ctx.textAlign = 'center';
       this.ctx.textBaseline = 'middle';
-      this.ctx.fillText(text.text, 0, 0);
+      this.ctx.fillText(char.char, 0, 0);
 
       // Outline
+      this.ctx.shadowBlur = 0;
       this.ctx.strokeStyle = '#1a0a2e';
-      this.ctx.lineWidth = 2;
-      this.ctx.strokeText(text.text, 0, 0);
+      this.ctx.lineWidth = 3;
+      this.ctx.strokeText(char.char, 0, 0);
 
       this.ctx.restore();
     }
@@ -356,6 +430,38 @@ export class DomainExpansionEffect {
     }
 
     this.ctx.restore();
+  }
+
+  private renderBurstLines(centerX: number, centerY: number, layer: number): void {
+    for (const line of this.burstLines) {
+      if (line.layer !== layer || line.length === 0) continue;
+
+      this.ctx.save();
+
+      // Create gradient for more dramatic effect
+      const startDist = Math.max(0, line.length - 150);
+      const startX = centerX + Math.cos(line.angle) * startDist;
+      const startY = centerY + Math.sin(line.angle) * startDist;
+      const endX = centerX + Math.cos(line.angle) * line.length;
+      const endY = centerY + Math.sin(line.angle) * line.length;
+
+      // Gradient from transparent to white
+      const gradient = this.ctx.createLinearGradient(startX, startY, endX, endY);
+      gradient.addColorStop(0, `rgba(255, 255, 255, 0)`);
+      gradient.addColorStop(0.3, `rgba(255, 255, 255, ${line.opacity * 0.5})`);
+      gradient.addColorStop(1, `rgba(255, 255, 255, ${line.opacity})`);
+
+      this.ctx.strokeStyle = gradient;
+      this.ctx.lineWidth = line.width;
+      this.ctx.lineCap = 'round';
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(startX, startY);
+      this.ctx.lineTo(endX, endY);
+      this.ctx.stroke();
+
+      this.ctx.restore();
+    }
   }
 
   private drawSplatter(p: InkParticle): void {

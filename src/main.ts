@@ -7,10 +7,9 @@ const CONFIG = {
   // Smoothing factor for finger position (0-1, higher = more smoothing)
   smoothingFactor: 0.5,
   // Whether to show debug overlay
-  showDebug: true,
-  // Canvas size
-  canvasWidth: 960,
-  canvasHeight: 720,
+  showDebug: false,
+  // Required hold duration for 無量空処 pose (ms)
+  muryoKushoHoldDuration: 3000,
 };
 
 // State
@@ -24,11 +23,35 @@ let effectCanvas: HTMLCanvasElement;
 let effectCtx: CanvasRenderingContext2D;
 let domainEffect: DomainExpansionEffect;
 
-// Pose detection state (to prevent repeated triggers)
-let muryoKushoWasDetected = false;
+// Pose detection state
+let muryoKushoStartTime: number | null = null; // When pose was first detected
+let muryoKushoTriggered = false; // Whether effect was already triggered for current pose
 
 // Smoothed finger position (normalized 0-1)
 let smoothedFingerPos: Point2D | null = null;
+
+// Sound effect for domain expansion
+let domainExpansionSound: HTMLAudioElement;
+
+// Resize canvases to fill window
+function resizeCanvases(): void {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  canvas.width = width;
+  canvas.height = height;
+
+  debugCanvas.width = width;
+  debugCanvas.height = height;
+
+  effectCanvas.width = width;
+  effectCanvas.height = height;
+
+  // Reinitialize domain effect if it exists (to update canvas reference)
+  if (domainEffect) {
+    domainEffect = new DomainExpansionEffect(effectCanvas);
+  }
+}
 
 // Initialize application
 async function init(): Promise<void> {
@@ -51,7 +74,7 @@ function setupDOM(): void {
       </div>
       <div class="controls">
         <label>
-          <input type="checkbox" id="debug-toggle" checked>
+          <input type="checkbox" id="debug-toggle">
           デバッグ表示
         </label>
         <label>
@@ -66,21 +89,26 @@ function setupDOM(): void {
 
   canvas = document.getElementById('output-canvas') as HTMLCanvasElement;
   ctx = canvas.getContext('2d')!;
-  canvas.width = CONFIG.canvasWidth;
-  canvas.height = CONFIG.canvasHeight;
 
   debugCanvas = document.getElementById('debug-canvas') as HTMLCanvasElement;
   debugCtx = debugCanvas.getContext('2d')!;
-  debugCanvas.width = CONFIG.canvasWidth;
-  debugCanvas.height = CONFIG.canvasHeight;
+  debugCanvas.style.display = CONFIG.showDebug ? 'block' : 'none';
 
   effectCanvas = document.getElementById('effect-canvas') as HTMLCanvasElement;
   effectCtx = effectCanvas.getContext('2d')!;
-  effectCanvas.width = CONFIG.canvasWidth;
-  effectCanvas.height = CONFIG.canvasHeight;
+
+  // Set canvas sizes to window size
+  resizeCanvases();
 
   // Initialize domain expansion effect
   domainEffect = new DomainExpansionEffect(effectCanvas);
+
+  // Initialize sound effect
+  domainExpansionSound = new Audio('/sound.mp3');
+  domainExpansionSound.preload = 'auto';
+
+  // Handle window resize
+  window.addEventListener('resize', resizeCanvases);
 
   video = document.getElementById('video') as HTMLVideoElement;
 
@@ -164,18 +192,38 @@ function startRenderLoop(): void {
       }
     }
 
-    // Check for 無量空処 pose and trigger effect
+    // Check for 無量空処 pose and trigger effect (requires 3 second hold)
     if (result.isNewFrame) {
-      // Can trigger if effect is not currently active
       const canTrigger = domainEffect.canTrigger();
+      const now = performance.now();
 
-      if (result.muryoKusho.detected && !muryoKushoWasDetected && canTrigger && result.muryoKusho.centerPoint) {
-        // Pose just detected - trigger effect!
-        console.log('[Main] 無量空処 detected! Triggering effect...');
-        domainEffect.trigger(result.muryoKusho.centerPoint);
+      if (result.muryoKusho.detected) {
+        // Pose detected - start or continue tracking hold duration
+        if (muryoKushoStartTime === null) {
+          muryoKushoStartTime = now;
+          muryoKushoTriggered = false;
+          console.log('[Main] 無量空処 pose started, charging...');
+        }
+
+        const holdDuration = now - muryoKushoStartTime;
+
+        // Trigger effect after holding for required duration
+        if (!muryoKushoTriggered && holdDuration >= CONFIG.muryoKushoHoldDuration && canTrigger && result.muryoKusho.centerPoint) {
+          console.log('[Main] 無量空処 charged! Triggering effect...');
+          domainEffect.trigger(result.muryoKusho.centerPoint);
+          // Play sound effect
+          domainExpansionSound.currentTime = 0;
+          domainExpansionSound.play().catch(e => console.warn('Sound play failed:', e));
+          muryoKushoTriggered = true;
+        }
+      } else {
+        // Pose not detected - reset tracking
+        if (muryoKushoStartTime !== null) {
+          console.log('[Main] 無量空処 pose released');
+        }
+        muryoKushoStartTime = null;
+        muryoKushoTriggered = false;
       }
-
-      muryoKushoWasDetected = result.muryoKusho.detected;
     }
 
     // Update effect
@@ -190,13 +238,28 @@ function startRenderLoop(): void {
 
     // Render debug canvas (only on new frames to prevent flickering)
     if (CONFIG.showDebug && result.isNewFrame) {
-      renderDebugCanvas(result.allHands, result.rightIndexFingerTip, result.muryoKusho.detected);
+      const chargeProgress = muryoKushoStartTime !== null
+        ? Math.min(1, (performance.now() - muryoKushoStartTime) / CONFIG.muryoKushoHoldDuration)
+        : 0;
+      renderDebugCanvas(result.allHands, result.rightIndexFingerTip, result.muryoKusho.detected, chargeProgress);
     }
 
     // Update status (only on new frames)
     if (result.isNewFrame) {
-      if (result.muryoKusho.detected) {
-        updateStatus(`🔮 無量空処 検出！ (confidence: ${(result.muryoKusho.confidence * 100).toFixed(0)}%)`);
+      if (result.muryoKusho.detected && muryoKushoStartTime !== null) {
+        const holdDuration = performance.now() - muryoKushoStartTime;
+        const progress = Math.min(100, (holdDuration / CONFIG.muryoKushoHoldDuration) * 100);
+        const remainingSec = Math.max(0, (CONFIG.muryoKushoHoldDuration - holdDuration) / 1000).toFixed(1);
+
+        if (muryoKushoTriggered) {
+          updateStatus(`領域展開！！`);
+        } else {
+          // Show charging progress bar
+          const barLength = 20;
+          const filledLength = Math.floor((progress / 100) * barLength);
+          const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
+          updateStatus(`領域展開... [${bar}] ${remainingSec}秒`);
+        }
       } else if (result.rightIndexFingerTip) {
         updateStatus(`追跡中 - 指位置: (${(result.rightIndexFingerTip.x * 100).toFixed(1)}%, ${(result.rightIndexFingerTip.y * 100).toFixed(1)}%)`);
       } else if (result.leftIndexFingerTip) {
@@ -269,7 +332,8 @@ function renderMainCanvas(): void {
 function renderDebugCanvas(
   allHands: ReturnType<typeof handTracker.detect>['allHands'],
   rightIndexFinger: Point2D | null,
-  muryoKushoDetected: boolean = false
+  muryoKushoDetected: boolean = false,
+  chargeProgress: number = 0
 ): void {
   debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
 
@@ -349,8 +413,42 @@ function renderDebugCanvas(
     debugCtx.fillText('追跡中', x - 20, y - 20);
   }
 
-  // Draw 無量空処 detection indicator
+  // Draw 無量空処 detection indicator with charge progress
   if (muryoKushoDetected) {
+    const centerX = debugCanvas.width / 2;
+    const centerY = debugCanvas.height / 2;
+
+    // Draw circular charge progress indicator
+    if (chargeProgress > 0 && chargeProgress < 1) {
+      const radius = 120;
+      const lineWidth = 8;
+
+      // Background circle (dim)
+      debugCtx.strokeStyle = 'rgba(255, 0, 255, 0.2)';
+      debugCtx.lineWidth = lineWidth;
+      debugCtx.beginPath();
+      debugCtx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      debugCtx.stroke();
+
+      // Progress arc (bright)
+      debugCtx.strokeStyle = '#ff00ff';
+      debugCtx.lineWidth = lineWidth;
+      debugCtx.shadowColor = '#ff00ff';
+      debugCtx.shadowBlur = 15;
+      debugCtx.lineCap = 'round';
+      debugCtx.beginPath();
+      debugCtx.arc(centerX, centerY, radius, -Math.PI / 2, -Math.PI / 2 + chargeProgress * Math.PI * 2);
+      debugCtx.stroke();
+      debugCtx.shadowBlur = 0;
+
+      // Draw percentage text
+      debugCtx.font = 'bold 48px sans-serif';
+      debugCtx.fillStyle = '#ff00ff';
+      debugCtx.textAlign = 'center';
+      debugCtx.textBaseline = 'middle';
+      debugCtx.fillText(`${Math.floor(chargeProgress * 100)}%`, centerX, centerY);
+    }
+
     // Draw glowing border around the canvas
     debugCtx.strokeStyle = '#ff00ff';
     debugCtx.lineWidth = 4;
@@ -363,7 +461,9 @@ function renderDebugCanvas(
     debugCtx.font = 'bold 24px sans-serif';
     debugCtx.fillStyle = '#ff00ff';
     debugCtx.textAlign = 'center';
-    debugCtx.fillText('🔮 無量空処 検出', debugCanvas.width / 2, 40);
+    debugCtx.textBaseline = 'alphabetic';
+    const statusText = chargeProgress >= 1 ? '無量空処！' : '領域展開...';
+    debugCtx.fillText(statusText, debugCanvas.width / 2, 40);
     debugCtx.textAlign = 'start';
   }
 }
